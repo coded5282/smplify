@@ -16,9 +16,10 @@ from demo_utils import convert_crop_cam_to_orig_img
 from renderer import Renderer
 
 # arguments
-IMG_FILE = '/data/edjchen/VIBE/video_data_frames/C0005/frame_0.png' # original image (without VIBE result)
-OPENPOSE_JSON_FILE = '/data/edjchen/VIBE/output_openpose_C0005/C0005_000000000000_keypoints.json'
-VIBE_OUTPUT_FILE = '/data/edjchen/VIBE/output/C0005_v1/C0005.MP4/vibe_output.pkl'
+IMG_FILE = '/data/edjchen/VIBE/video_data_frames/man_bool/mannequin_booled.jpg' # original image (without VIBE result)
+OPENPOSE_JSON_FILE = '/data/edjchen/VIBE/output_openpose_man_bool/mannequin_booled_000000000000_keypoints.json'
+VIBE_OUTPUT_FILE = '/data/edjchen/VIBE/output/man_bool_v2/mannequin_booled.avi/vibe_output.pkl'
+SILHOUETTE_FILE = '/data/edjchen/VIBE/mannequin_background_zero.png'
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -27,6 +28,9 @@ posetrack_dict = read_posetrack_keypoints(OPENPOSE_JSON_FILE)
 vibe_output = joblib.load(VIBE_OUTPUT_FILE)
 img = cv2.cvtColor(cv2.imread(IMG_FILE), cv2.COLOR_BGR2RGB)
 orig_height, orig_width, orig_channels = img.shape
+silhouette_img = cv2.cvtColor(cv2.imread(SILHOUETTE_FILE), cv2.COLOR_BGR2GRAY)
+silhouette_mask = silhouette_img != 0
+# set silhouette_mask to None to not use sihouette loss
 
 joints2d = posetrack_dict[0]['joints2d']
 frames = posetrack_dict[0]['frames']
@@ -74,6 +78,10 @@ new_opt_joints3d, new_opt_joint_loss, opt_joint_loss = smplify_runner(
     device=device,
     batch_size=norm_joints2d.shape[0],
     pose2aa=False,
+    silhouette=silhouette_mask,
+    bboxes=bboxes,
+    orig_width=orig_width,
+    orig_height=orig_height,
 )
 
 # Render image

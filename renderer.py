@@ -124,3 +124,51 @@ class Renderer:
         self.scene.remove_node(cam_node)
 
         return image
+
+    def render_mask(self, verts, cam, angle=None, axis=None, mesh_filename=None, color=[1.0, 1.0, 0.9]):
+
+        mesh = trimesh.Trimesh(vertices=verts, faces=self.faces, process=False)
+
+        Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
+        mesh.apply_transform(Rx)
+
+        if mesh_filename is not None:
+            mesh.export(mesh_filename)
+
+        if angle and axis:
+            R = trimesh.transformations.rotation_matrix(math.radians(angle), axis)
+            mesh.apply_transform(R)
+
+        sx, sy, tx, ty = cam
+
+        camera = WeakPerspectiveCamera(
+            scale=[sx, sy],
+            translation=[tx, ty],
+            zfar=1000.
+        )
+
+        material = pyrender.MetallicRoughnessMaterial(
+            metallicFactor=0.0,
+            alphaMode='OPAQUE',
+            baseColorFactor=(color[0], color[1], color[2], 1.0)
+        )
+
+        mesh = pyrender.Mesh.from_trimesh(mesh, material=material)
+
+        mesh_node = self.scene.add(mesh, 'mesh')
+
+        camera_pose = np.eye(4)
+        cam_node = self.scene.add(camera, pose=camera_pose)
+
+        if self.wireframe:
+            render_flags = RenderFlags.RGBA | RenderFlags.ALL_WIREFRAME
+        else:
+            render_flags = RenderFlags.RGBA
+
+        rgb, _ = self.renderer.render(self.scene, flags=render_flags)
+        valid_mask = (rgb[:, :, -1] > 0)[:, :, np.newaxis]
+
+        self.scene.remove_node(mesh_node)
+        self.scene.remove_node(cam_node)
+
+        return valid_mask

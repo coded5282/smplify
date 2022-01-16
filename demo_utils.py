@@ -40,7 +40,11 @@ def smplify_runner(
         lr=1.0,
         opt_steps=1,
         use_lbfgs=True,
-        pose2aa=True
+        pose2aa=True,
+        silhouette=None,
+        bboxes=None,
+        orig_width=None,
+        orig_height=None,
 ):
     smplify = TemporalSMPLify(
         step_size=lr,
@@ -87,6 +91,10 @@ def smplify_runner(
         pred_cam_t.detach(),
         0.5 * 224 * torch.ones(batch_size, 2, device=device),
         gt_keypoints_2d_orig,
+        mask=silhouette,
+        bboxes=bboxes,
+        orig_width=orig_width,
+        orig_height=orig_height,
     )
     new_opt_joint_loss = new_opt_joint_loss.mean(dim=-1)
     # smplify_time = time.time() - start

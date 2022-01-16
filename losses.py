@@ -22,6 +22,13 @@ def angle_prior(pose):
     return torch.exp(
         pose[:, [55 - 3, 58 - 3, 12 - 3, 15 - 3]] * torch.tensor([1., -1., -1, -1.], device=pose.device)) ** 2
 
+def dice_loss(inputs, targets, smooth=1e-6):
+    inputs = inputs.reshape(-1)
+    targets = targets.reshape(-1)
+
+    intersection = (inputs*targets).sum()
+    dice = (2. * intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
+    return 1 - dice
 
 def body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_center,
                       joints_2d, joints_conf, pose_prior,
@@ -103,8 +110,8 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
                                joints_2d, joints_conf, pose_prior,
                                focal_length=5000, sigma=100, pose_prior_weight=4.78,
                                shape_prior_weight=5, angle_prior_weight=15.2,
-                               smooth_2d_weight=0.01, smooth_3d_weight=1.0,
-                               output='sum'):
+                               smooth_2d_weight=0.01, smooth_3d_weight=1.0, silhouette_weight=30.0,
+                               output='sum', gt_mask=None, mesh_mask=None):
     """
     Loss function for body fitting
     """
@@ -131,7 +138,7 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
     # Regularizer to prevent betas from taking large values
     shape_prior_loss = (shape_prior_weight ** 2) * (betas ** 2).sum(dim=-1)
 
-    total_loss = reprojection_loss.sum(dim=-1) + pose_prior_loss + angle_prior_loss + shape_prior_loss
+    total_loss = reprojection_loss.sum(dim=-1) + pose_prior_loss + angle_prior_loss + shape_prior_loss # each roughly 100, 300, 400
 
     # Smooth 2d joint loss
     joint_conf_diff = joints_conf[1:]
@@ -151,7 +158,13 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
     ).sum(dim=-1)
     smooth_j3d_loss = (smooth_3d_weight ** 2) * smooth_j3d_loss
 
-    total_loss += smooth_j2d_loss + smooth_j3d_loss
+    # Silhouette loss
+    dice_loss_val = 0
+    if (gt_mask is not None) and (mesh_mask is not None):
+        dice_loss_val = dice_loss(inputs=mesh_mask, targets=gt_mask)
+        dice_loss_val = (silhouette_weight ** 2) * dice_loss_val
+
+    total_loss += smooth_j2d_loss + smooth_j3d_loss + dice_loss_val
 
     # print(f'joints: {reprojection_loss[0].sum().item():.2f}, '
     #       f'pose_prior: {pose_prior_loss[0].item():.2f}, '

@@ -3,13 +3,35 @@
 
 import os
 import torch
+import numpy as np
+import colorsys
 
 from smpl import SMPL, JOINT_IDS, SMPL_MODEL_DIR
 from losses import temporal_camera_fitting_loss, temporal_body_fitting_loss
+from renderer import Renderer
 
 # For the GMM prior, we use the GMM implementation of SMPLify-X
 # https://github.com/vchoutas/smplify-x/blob/master/smplifyx/prior.py
 from prior import MaxMixturePrior
+
+def convert_crop_cam_to_orig_img(cam, bbox, img_width, img_height):
+    '''
+    Convert predicted camera from cropped image coordinates
+    to original image coordinates
+    :param cam (ndarray, shape=(3,)): weak perspective camera in cropped img coordinates
+    :param bbox (ndarray, shape=(4,)): bbox coordinates (c_x, c_y, h)
+    :param img_width (int): original image width
+    :param img_height (int): original image height
+    :return:
+    '''
+    cx, cy, h = bbox[:,0], bbox[:,1], bbox[:,2]
+    hw, hh = img_width / 2., img_height / 2.
+    sx = cam[:,0] * (1. / (img_width / h))
+    sy = cam[:,0] * (1. / (img_height / h))
+    tx = ((cx - hw) / hw / sx) + cam[:,1]
+    ty = ((cy - hh) / hh / sy) + cam[:,2]
+    orig_cam = np.stack([sx, sy, tx, ty]).T
+    return orig_cam
 
 def arrange_betas(pose, betas):
     batch_size = pose.shape[0]
@@ -56,7 +78,16 @@ class TemporalSMPLify():
                          batch_size=batch_size,
                          create_transl=False).to(self.device)
 
-    def __call__(self, init_pose, init_betas, init_cam_t, camera_center, keypoints_2d):
+    def __call__(self, 
+                init_pose, 
+                init_betas, 
+                init_cam_t, 
+                camera_center, 
+                keypoints_2d, 
+                mask=None, 
+                bboxes=None,
+                orig_width=None,
+                orig_height=None):
         """Perform body fitting.
         Input:
             init_pose: SMPL pose estimate
@@ -72,7 +103,6 @@ class TemporalSMPLify():
             camera_translation: Camera translation
             reprojection_loss: Final joint reprojection loss
         """
-
         # Make camera translation a learnable parameter
         camera_translation = init_cam_t.clone()
 
@@ -84,6 +114,10 @@ class TemporalSMPLify():
         body_pose = init_pose[:, 3:].detach().clone()
         global_orient = init_pose[:, :3].detach().clone()
         betas = init_betas.detach().clone()
+
+        # Initialize renderer for silhouette loss
+        if mask is not None:
+            renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=False)
 
         # Step 1: Optimize camera translation and body orientation
         # Optimize only camera translation and body orientation
@@ -159,9 +193,33 @@ class TemporalSMPLify():
                                             betas=betas_ext)
                     model_joints = smpl_output.joints
 
+                    # transforming camera matrices and rendering to prepare for silhouette loss
+                    mesh_mask = None
+                    if mask is not None:
+                        model_vertices = smpl_output.vertices.detach().clone()
+                        camera_translation_clone = camera_translation.detach().clone()
+                        camera_translation_weak = torch.stack([
+                                                    2 * 5000. / (224 * camera_translation_clone[:,2] + 1e-9),
+                                                    camera_translation_clone[:,0], camera_translation_clone[:,1]
+                                                ], dim=-1)
+                        orig_cam = convert_crop_cam_to_orig_img(
+                                        cam=camera_translation_weak.cpu().numpy(), # (733x3)
+                                        bbox=bboxes, # (733x4)
+                                        img_width=orig_width,
+                                        img_height=orig_height
+                                    )
+                        mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
+                        mesh_mask = renderer.render_mask(
+                                                verts=model_vertices[0].cpu().numpy(),
+                                                cam=orig_cam[0],
+                                                color=mesh_color,
+                                                mesh_filename=None,
+                                            )[:,:,0]
+
                     loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
                                              joints_2d, joints_conf, self.pose_prior,
-                                             focal_length=self.focal_length)
+                                             focal_length=self.focal_length, gt_mask=mask, mesh_mask=mesh_mask)
+
                     loss.backward()
                     return loss
 
@@ -209,9 +267,32 @@ class TemporalSMPLify():
                                             betas=betas_ext)
                     model_joints = smpl_output.joints
 
+                    # transforming camera matrices and rendering to prepare for silhouette loss
+                    mesh_mask = None
+                    if mask is not None:
+                        model_vertices = smpl_output.vertices.detach().clone()
+                        camera_translation_clone = camera_translation.detach().clone()
+                        camera_translation_weak = torch.stack([
+                                                    2 * 5000. / (224 * camera_translation_clone[:,2] + 1e-9),
+                                                    camera_translation_clone[:,0], camera_translation_clone[:,1]
+                                                ], dim=-1)
+                        orig_cam = convert_crop_cam_to_orig_img(
+                                        cam=camera_translation_weak.cpu().numpy(), # (733x3)
+                                        bbox=bboxes, # (733x4)
+                                        img_width=orig_width,
+                                        img_height=orig_height
+                                    )
+                        mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
+                        mesh_mask = renderer.render_mask(
+                                                verts=model_vertices[0].cpu().numpy(),
+                                                cam=orig_cam[0],
+                                                color=mesh_color,
+                                                mesh_filename=None,
+                                            )
+
                     loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
-                                             joints_2d, joints_conf, self.pose_prior,
-                                             focal_length=self.focal_length)
+                                            joints_2d, joints_conf, self.pose_prior,
+                                            focal_length=self.focal_length, gt_mask=mask, mesh_mask=mesh_mask)
                     loss.backward()
                     return loss
 
@@ -242,11 +323,35 @@ class TemporalSMPLify():
                                     body_pose=body_pose,
                                     betas=betas_ext)
             model_joints = smpl_output.joints
+
+            # transforming camera matrices and rendering to prepare for silhouette loss
+            mesh_mask = None
+            if mask is not None:
+                model_vertices = smpl_output.vertices.detach().clone()
+                camera_translation_clone = camera_translation.detach().clone()
+                camera_translation_weak = torch.stack([
+                                            2 * 5000. / (224 * camera_translation_clone[:,2] + 1e-9),
+                                            camera_translation_clone[:,0], camera_translation_clone[:,1]
+                                        ], dim=-1)
+                orig_cam = convert_crop_cam_to_orig_img(
+                                cam=camera_translation_weak.cpu().numpy(), # (733x3)
+                                bbox=bboxes, # (733x4)
+                                img_width=orig_width,
+                                img_height=orig_height
+                            )
+                mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
+                mesh_mask = renderer.render_mask(
+                                        verts=model_vertices[0].cpu().numpy(),
+                                        cam=orig_cam[0],
+                                        color=mesh_color,
+                                        mesh_filename=None,
+                                    )
+
             reprojection_loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation,
                                                            camera_center,
                                                            joints_2d, joints_conf, self.pose_prior,
                                                            focal_length=self.focal_length,
-                                                           output='reprojection')
+                                                           output='reprojection', gt_mask=mask, mesh_mask=mesh_mask)
 
         vertices = smpl_output.vertices.detach()
         joints = smpl_output.joints.detach()
