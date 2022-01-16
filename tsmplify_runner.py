@@ -1,13 +1,19 @@
+import cv2
+import joblib
+import numpy as np
+import colorsys
+import torch
+import os
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
+
 from pose_tracker import read_posetrack_keypoints
 from torch.utils.data import DataLoader
 from kp_utils import convert_kps
 from smooth_bbox import get_all_bbox_params
 from img_utils import get_single_image_crop_demo
 from demo_utils import smplify_runner
-import cv2
-import joblib
-import numpy as np
-import torch
+from demo_utils import convert_crop_cam_to_orig_img
+from renderer import Renderer
 
 # arguments
 IMG_FILE = '/data/edjchen/VIBE/video_data_frames/C0005/frame_0.png' # original image (without VIBE result)
@@ -20,6 +26,7 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 posetrack_dict = read_posetrack_keypoints(OPENPOSE_JSON_FILE)
 vibe_output = joblib.load(VIBE_OUTPUT_FILE)
 img = cv2.cvtColor(cv2.imread(IMG_FILE), cv2.COLOR_BGR2RGB)
+orig_height, orig_width, orig_channels = img.shape
 
 joints2d = posetrack_dict[0]['joints2d']
 frames = posetrack_dict[0]['frames']
@@ -69,49 +76,31 @@ new_opt_joints3d, new_opt_joint_loss, opt_joint_loss = smplify_runner(
     pose2aa=False,
 )
 
-breakpoint()
+# Render image
+renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=False)
 
-
-# UPDATE PARAMETERS
-# RENDER INTO IMAGE/VIDEO
-# SAVE RESULTS
-
-
-
-
-
-# ========= Save results to a pickle file ========= #
-pred_cam = pred_cam.cpu().numpy()
-pred_verts = pred_verts.cpu().numpy()
-pred_pose = pred_pose.cpu().numpy()
-pred_betas = pred_betas.cpu().numpy()
-pred_joints3d = pred_joints3d.cpu().numpy()
-smpl_joints2d = smpl_joints2d.cpu().numpy()
+pred_cam = new_opt_cam.numpy()
+bboxes = bboxes
 
 orig_cam = convert_crop_cam_to_orig_img(
-    cam=pred_cam,
-    bbox=bboxes,
-    img_width=orig_width,
-    img_height=orig_height
-)
+            cam=pred_cam,
+            bbox=bboxes,
+            img_width=orig_width,
+            img_height=orig_height
+        )
 
-joints2d_img_coord = convert_crop_coords_to_orig_img(
-    bbox=bboxes,
-    keypoints=smpl_joints2d,
-    crop_size=224,
-)
+img = cv2.imread(IMG_FILE)
+frame_verts = new_opt_vertices[0].numpy()
+frame_cam = orig_cam[0]
+mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
 
-output_dict = {
-    'pred_cam': pred_cam,
-    'orig_cam': orig_cam,
-    'verts': pred_verts,
-    'pose': pred_pose,
-    'betas': pred_betas,
-    'joints3d': pred_joints3d,
-    'joints2d': joints2d,
-    'joints2d_img_coord': joints2d_img_coord,
-    'bboxes': bboxes,
-    'frame_ids': frames,
-}
+img = renderer.render(
+                    img,
+                    frame_verts,
+                    cam=frame_cam,
+                    color=mesh_color,
+                    mesh_filename=None,
+                )
 
-vibe_results[person_id] = output_dict
+cv2.imshow("Render Result", img)
+cv2.waitKey(0)
