@@ -20,6 +20,12 @@ IMG_FILE = '/data/edjchen/VIBE/video_data_frames/man_bool/mannequin_booled.jpg' 
 OPENPOSE_JSON_FILE = '/data/edjchen/VIBE/output_openpose_man_bool/mannequin_booled_000000000000_keypoints.json'
 VIBE_OUTPUT_FILE = '/data/edjchen/VIBE/output/man_bool_v2/mannequin_booled.avi/vibe_output.pkl'
 SILHOUETTE_FILE = '/data/edjchen/VIBE/mannequin_background_zero.png'
+MESH_OUTPUT_DIR = '/data/edjchen/TSMPlify/mesh_outputs'
+MESH_OUTPUT_FILE = '/data/edjchen/TSMPlify/mesh_outputs/mesh_1.obj'
+
+if not os.path.exists(MESH_OUTPUT_DIR):
+    print("Creating mesh output directory")
+    os.makedirs(MESH_OUTPUT_DIR)
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -107,7 +113,7 @@ img = renderer.render(
                     frame_verts,
                     cam=frame_cam,
                     color=mesh_color,
-                    mesh_filename=None,
+                    mesh_filename=MESH_OUTPUT_FILE,
                 )
 
 cv2.imshow("Render Result", img)

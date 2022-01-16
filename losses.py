@@ -110,7 +110,7 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
                                joints_2d, joints_conf, pose_prior,
                                focal_length=5000, sigma=100, pose_prior_weight=4.78,
                                shape_prior_weight=5, angle_prior_weight=15.2,
-                               smooth_2d_weight=0.01, smooth_3d_weight=1.0, silhouette_weight=30.0,
+                               smooth_2d_weight=0.01, smooth_3d_weight=1.0, silhouette_weight=40.0,
                                output='sum', gt_mask=None, mesh_mask=None):
     """
     Loss function for body fitting
