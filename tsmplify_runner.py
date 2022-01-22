@@ -4,6 +4,7 @@ import numpy as np
 import colorsys
 import torch
 import os
+import joblib
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
 from pose_tracker import read_posetrack_keypoints
@@ -14,18 +15,43 @@ from img_utils import get_single_image_crop_demo
 from demo_utils import smplify_runner
 from demo_utils import convert_crop_cam_to_orig_img
 from renderer import Renderer
+from smpl import get_smpl_faces
+
+def check_latest(INPUT_DIR):
+    current_files = os.listdir(INPUT_DIR)
+    try:
+        file_nums = [int(f.split('.')[0].split('_')[1]) for f in current_files]
+        return sorted(file_nums)[-1]
+    except Exception as e:
+        print("May have input incorrect directory?")
 
 # arguments
 IMG_FILE = '/data/edjchen/VIBE/video_data_frames/man_bool/mannequin_booled.jpg' # original image (without VIBE result)
 OPENPOSE_JSON_FILE = '/data/edjchen/VIBE/output_openpose_man_bool/mannequin_booled_000000000000_keypoints.json'
-VIBE_OUTPUT_FILE = '/data/edjchen/VIBE/output/man_bool_v2/mannequin_booled.avi/vibe_output.pkl'
+#VIBE_OUTPUT_FILE = '/data/edjchen/VIBE/output/man_bool_v2/mannequin_booled.avi/vibe_output.pkl'
+VIBE_OUTPUT_FILE = '/data/edjchen/TSMPlify/pkl_outputs/results_9.pkl'
 SILHOUETTE_FILE = '/data/edjchen/VIBE/mannequin_background_zero.png'
+
 MESH_OUTPUT_DIR = '/data/edjchen/TSMPlify/mesh_outputs'
-MESH_OUTPUT_FILE = '/data/edjchen/TSMPlify/mesh_outputs/mesh_1.obj'
+IMG_OUTPUT_DIR = '/data/edjchen/TSMPlify/img_outputs'
+PKL_OUTPUT_DIR = '/data/edjchen/TSMPlify/pkl_outputs'
+
+curr_file_num = check_latest(MESH_OUTPUT_DIR) + 1
+MESH_OUTPUT_FILE = '/data/edjchen/TSMPlify/mesh_outputs/mesh_' + str(curr_file_num) + '.obj'
+IMG_OUTPUT_FILE = '/data/edjchen/TSMPlify/img_outputs/img_' + str(curr_file_num) + '.png'
+PKL_OUTPUT_FILE = '/data/edjchen/TSMPlify/pkl_outputs/results_' + str(curr_file_num) + '.pkl'
 
 if not os.path.exists(MESH_OUTPUT_DIR):
     print("Creating mesh output directory")
     os.makedirs(MESH_OUTPUT_DIR)
+
+if not os.path.exists(IMG_OUTPUT_DIR):
+    print("Creating image output directory")
+    os.makedirs(IMG_OUTPUT_DIR)
+
+if not os.path.exists(PKL_OUTPUT_DIR):
+    print("Creating results output directory")
+    os.makedirs(PKL_OUTPUT_DIR)
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -64,9 +90,27 @@ norm_joints2d = convert_kps(norm_joints2d, src='staf', dst='spin')
 norm_joints2d = torch.from_numpy(norm_joints2d).float().to(device)
 
 # Obtain pred_pose, pred_betas, pred_cam from VIBE output file
-pred_pose = torch.from_numpy(vibe_output[0]['pose'][0,:].reshape(1, -1))
-pred_betas = torch.from_numpy(vibe_output[0]['betas'][0,:].reshape(1, -1))
-pred_cam = torch.from_numpy(vibe_output[0]['pred_cam'][0,:].reshape(1, -1))
+try:
+    pred_pose = torch.from_numpy(vibe_output[0]['pose'][0,:].reshape(1, -1))
+except:
+    pred_pose = vibe_output['pose'][0,:].reshape(1, -1)
+try:
+    pred_betas = torch.from_numpy(vibe_output[0]['betas'][0,:].reshape(1, -1))
+except:
+    pred_betas = vibe_output['betas'][0,:].reshape(1, -1)
+try:
+    pred_cam = torch.from_numpy(vibe_output[0]['pred_cam'][0,:].reshape(1, -1))
+except:
+    pred_cam = vibe_output['pred_cam'][0,:].reshape(1, -1)
+
+""" import math
+import trimesh
+model_vertices = vibe_output['verts'][0,:]
+faces = get_smpl_faces()
+mesh = trimesh.Trimesh(vertices=model_vertices.numpy(), faces=faces, process=False)
+Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
+mesh.apply_transform(Rx)
+breakpoint() """
 
 # put tensors on gpu
 pred_pose = pred_pose.to(device)
@@ -89,6 +133,18 @@ new_opt_joints3d, new_opt_joint_loss, opt_joint_loss = smplify_runner(
     orig_width=orig_width,
     orig_height=orig_height,
 )
+
+# Save results dictionary
+results_dict = {
+    'verts': new_opt_vertices,
+    'pred_cam': new_opt_cam,
+    'pose': new_opt_pose,
+    'betas': new_opt_betas,
+    'joints_3d': new_opt_joints3d,
+}
+
+joblib.dump(results_dict, PKL_OUTPUT_FILE)
+print("Saved results pickle file")
 
 # Render image
 renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=False)
@@ -116,5 +172,7 @@ img = renderer.render(
                     mesh_filename=MESH_OUTPUT_FILE,
                 )
 
+cv2.imwrite(IMG_OUTPUT_FILE, img)
+print("Saved image file")
 cv2.imshow("Render Result", img)
 cv2.waitKey(0)

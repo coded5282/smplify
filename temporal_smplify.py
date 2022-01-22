@@ -5,9 +5,11 @@ import os
 import torch
 import numpy as np
 import colorsys
+import trimesh
+import math
 
-from smpl import SMPL, JOINT_IDS, SMPL_MODEL_DIR
-from losses import temporal_camera_fitting_loss, temporal_body_fitting_loss
+from smpl import SMPL, JOINT_IDS, SMPL_MODEL_DIR, get_smpl_faces
+from losses import temporal_camera_fitting_loss, temporal_body_fitting_loss, geometric_loss
 from renderer import Renderer
 
 # For the GMM prior, we use the GMM implementation of SMPLify-X
@@ -60,13 +62,13 @@ class TemporalSMPLify():
         self.device = device
         self.focal_length = focal_length
         #self.step_size = step_size
-        self.step_size = 1e-2
+        self.step_size = 1e-1
         self.max_iter = max_iter
         # Ignore the the following joints for the fitting process
         ign_joints = ['OP Neck', 'OP RHip', 'OP LHip', 'Right Hip', 'Left Hip']
         self.ign_joints = [JOINT_IDS[i] for i in ign_joints]
         #self.num_iters = num_iters
-        self.num_iters = 100
+        self.num_iters = 50
 
         # GMM pose prior
         self.pose_prior = MaxMixturePrior(prior_folder='data/vibe_data',
@@ -121,12 +123,12 @@ class TemporalSMPLify():
 
         # Step 1: Optimize camera translation and body orientation
         # Optimize only camera translation and body orientation
-        """ body_pose.requires_grad = False
+        body_pose.requires_grad = False
         betas.requires_grad = False
-        global_orient.requires_grad = True
-        camera_translation.requires_grad = True
+        global_orient.requires_grad = False
+        camera_translation.requires_grad = False
 
-        camera_opt_params = [global_orient, camera_translation]
+        """ camera_opt_params = [global_orient, camera_translation]
 
         if self.use_lbfgs:
             camera_optimizer = torch.optim.LBFGS(camera_opt_params, max_iter=self.max_iter,
@@ -139,7 +141,6 @@ class TemporalSMPLify():
                                             body_pose=body_pose,
                                             betas=betas_ext)
                     model_joints = smpl_output.joints
-
 
                     loss = temporal_camera_fitting_loss(model_joints, camera_translation,
                                                init_cam_t, camera_center,
@@ -162,21 +163,21 @@ class TemporalSMPLify():
                                            joints_2d, joints_conf, focal_length=self.focal_length)
                 camera_optimizer.zero_grad()
                 loss.backward()
-                camera_optimizer.step()
+                camera_optimizer.step() """
 
         # Fix camera translation after optimizing camera
-        camera_translation.requires_grad = False """
+        camera_translation.requires_grad = False
 
         # Step 2: Optimize body joints
         # Optimize only the body pose and global orientation of the body
         body_pose.requires_grad = True
-        betas.requires_grad = False
-        """ global_orient.requires_grad = True """
-        global_orient.requires_grad = False
+        betas.requires_grad = True
+        global_orient.requires_grad = True
+        # global_orient.requires_grad = False
         camera_translation.requires_grad = False
-        """ body_opt_params = [body_pose, betas, global_orient] """
+        body_opt_params = [body_pose, betas, global_orient]
         #body_opt_params = [body_pose, betas]
-        body_opt_params = [body_pose]
+        #body_opt_params = [body_pose]
 
         # For joints ignored during fitting, set the confidence to 0
         joints_conf[:, self.ign_joints] = 0.
@@ -197,6 +198,7 @@ class TemporalSMPLify():
                     mesh_mask = None
                     if mask is not None:
                         model_vertices = smpl_output.vertices.detach().clone()
+                        
                         camera_translation_clone = camera_translation.detach().clone()
                         camera_translation_weak = torch.stack([
                                                     2 * 5000. / (224 * camera_translation_clone[:,2] + 1e-9),
@@ -216,9 +218,26 @@ class TemporalSMPLify():
                                                 mesh_filename=None,
                                             )[:,:,0]
 
+                    #model_vertices = smpl_output.vertices.detach().clone()
+                    """ faces = get_smpl_faces()
+                    mesh = trimesh.Trimesh(vertices=model_vertices.cpu()[0].numpy(), faces=faces, process=False)
+                    Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
+                    mesh.apply_transform(Rx) """
+                    
+                    model_vertices = smpl_output.vertices
+                    bot_vertex_a = model_vertices[0,3421,:]
+                    top_vertex_a = model_vertices[0,809,:]
+                    loss_a = geometric_loss(bot_vertex_a, top_vertex_a, 1.10)
+                    bot_vertex_b = model_vertices[0,6822,:]
+                    top_vertex_b = model_vertices[0,4295,:]
+                    loss_b = geometric_loss(bot_vertex_b, top_vertex_b, 1.10)
+                    geometric_loss_sum = (80.0 ** 2) * (loss_a + loss_b)
+
                     loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
                                              joints_2d, joints_conf, self.pose_prior,
                                              focal_length=self.focal_length, gt_mask=mask, mesh_mask=mesh_mask)
+
+                    loss += geometric_loss_sum
 
                     loss.backward()
                     return loss
@@ -243,12 +262,12 @@ class TemporalSMPLify():
 
         # Step 3: Optimize beta only
         # Optimize only the body pose and global orientation of the body
-        body_pose.requires_grad = False
+        """ body_pose.requires_grad = False
         betas.requires_grad = True
-        """ global_orient.requires_grad = True """
+        global_orient.requires_grad = True
         global_orient.requires_grad = False
         camera_translation.requires_grad = False
-        """ body_opt_params = [body_pose, betas, global_orient] """
+        body_opt_params = [body_pose, betas, global_orient]
         #body_opt_params = [body_pose, betas]
         beta_opt_params = [betas]
 
@@ -311,7 +330,7 @@ class TemporalSMPLify():
                                          focal_length=self.focal_length)
                 beta_optimizer.zero_grad()
                 loss.backward()
-                beta_optimizer.step()
+                beta_optimizer.step() """
 
 
 

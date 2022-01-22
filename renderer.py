@@ -81,6 +81,7 @@ class Renderer:
 
         Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
         mesh.apply_transform(Rx)
+        # breakpoint()
 
         if mesh_filename is not None:
             mesh.export(mesh_filename)
@@ -131,6 +132,7 @@ class Renderer:
 
         Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
         mesh.apply_transform(Rx)
+        # breakpoint()
 
         if mesh_filename is not None:
             mesh.export(mesh_filename)
