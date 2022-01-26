@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from spin import perspective_projection
 from smpl import JOINT_IDS
+import cv2
 
 def gmof(x, sigma):
     """
@@ -23,18 +24,32 @@ def angle_prior(pose):
     return torch.exp(
         pose[:, [55 - 3, 58 - 3, 12 - 3, 15 - 3]] * torch.tensor([1., -1., -1, -1.], device=pose.device)) ** 2
 
-def dice_loss(inputs, targets, smooth=1e-6):
+""" def dice_loss(inputs, targets, smooth=1e-6):
     inputs = inputs.reshape(-1)
     targets = targets.reshape(-1)
 
     intersection = (inputs*targets).sum()
     dice = (2. * intersection + smooth) / (inputs.sum() + targets.sum() + smooth)
+    return 1 - dice """
+
+def dice_loss(inputs, targets, smooth=1e-6):
+    inputs = inputs.view(-1)
+    targets = targets.view(-1)
+    
+    intersection = (inputs * targets).sum()                            
+    dice = (2.*intersection + smooth)/(inputs.sum() + targets.sum() + smooth)  
+    
     return 1 - dice
 
 def geometric_loss(point_a, point_b, true_dist):
     curr_dist = torch.norm(point_a-point_b)
     error = true_dist - curr_dist
     return torch.abs(error)
+
+def binary_silhouette_loss(gt_mask, projected_vertices):
+    # gt_mask: 224x224 binary image (1's on the body)
+    # projected_vertices: 1x6890x2 coordinates
+    pass
 
 def body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_center,
                       joints_2d, joints_conf, pose_prior,
@@ -111,13 +126,22 @@ def camera_fitting_loss(model_joints, camera_t, camera_t_est, camera_center, joi
     total_loss = reprojection_loss + depth_loss
     return total_loss.sum()
 
+def draw_on_image(img, points, color, radius=1):
+    # points: numpy (num_points x 2)
+    num_points = points.shape[0]
+    for i in range(num_points):
+        x, y = points[i,:]
+        center_coordinates = (int(round(x)), int(round(y)))
+        thickness = 1
+        img = cv2.circle(img, center_coordinates, radius, color, thickness)
+    return img
 
 def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_center,
                                joints_2d, joints_conf, pose_prior,
-                               focal_length=5000, sigma=100, pose_prior_weight=4.78,
-                               shape_prior_weight=4, angle_prior_weight=15.2,
-                               smooth_2d_weight=0.01, smooth_3d_weight=1.0, silhouette_weight=80.0,
-                               output='sum', gt_mask=None, mesh_mask=None):
+                               focal_length=5000, sigma=100, pose_prior_weight=6.78, # 6.78 sigma: 100
+                               shape_prior_weight=7.0, angle_prior_weight=4.5, # 4.5
+                               smooth_2d_weight=1000, smooth_3d_weight=1.0, silhouette_weight=80.0,
+                               output='sum', gt_mask=None, mesh_mask=None, mesh_vertices=None):
     """
     Loss function for body fitting
     """
@@ -128,13 +152,30 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
 
     batch_size = body_pose.shape[0]
     rotation = torch.eye(3, device=body_pose.device).unsqueeze(0).expand(batch_size, -1, -1)
+    #breakpoint()
+    # model_joints: torch (1, 49, 3)
+    # projected_joints: torch (1, 49, 2)
     projected_joints = perspective_projection(model_joints, rotation, camera_t,
                                               focal_length, camera_center)
 
+    if mesh_vertices is not None:
+        pass
+        """ projected_vertices = perspective_projection(mesh_vertices, rotation, camera_t,
+                                                    focal_length, camera_center)
+        gt_mask = torch.mean(gt_mask.float(), 2) # (224, 224)
+        gt_indices = torch.nonzero(gt_mask) # get indices of non-zero elements
+        projected_mask = torch.zeros((gt_mask.shape[0], gt_mask.shape[0]))
+        projected_mask[torch.round(projected_vertices[0,:,0]), torch.round(projected_vertices[0,:,1])] = 1 """
+
+    if gt_mask is not None:
+        pass
+        """ img = draw_on_image(gt_mask.numpy()*255, projected_joints[0].detach().cpu().numpy(), (255, 0, 0), radius=5)
+        img = draw_on_image(img, joints_2d[0].detach().cpu().numpy(), (0, 0, 255), radius=5)
+        img = draw_on_image(img, projected_vertices[0].detach().cpu().numpy(), (0, 255, 0), radius=1) """
+    
     # Weighted robust reprojection error
     reprojection_error = gmof(projected_joints - joints_2d, sigma)
     reprojection_loss = (joints_conf ** 2) * reprojection_error.sum(dim=-1)
-
     # Pose prior loss
     pose_prior_loss = (pose_prior_weight ** 2) * pose_prior(body_pose, betas)
 
@@ -169,8 +210,6 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
     if (gt_mask is not None) and (mesh_mask is not None):
         dice_loss_val = dice_loss(inputs=mesh_mask, targets=gt_mask)
         dice_loss_val = (silhouette_weight ** 2) * dice_loss_val
-
-    #breakpoint()
 
     total_loss += smooth_j2d_loss + smooth_j3d_loss + dice_loss_val
 

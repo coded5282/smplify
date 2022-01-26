@@ -24,7 +24,7 @@ import torch
 import subprocess
 import numpy as np
 import os.path as osp
-from pytube import YouTube
+#from pytube import YouTube
 from collections import OrderedDict
 
 from geometry import rotation_matrix_to_angle_axis
@@ -91,7 +91,7 @@ def smplify_runner(
         pred_cam_t.detach(),
         0.5 * 224 * torch.ones(batch_size, 2, device=device),
         gt_keypoints_2d_orig,
-        mask=silhouette,
+        gt_mask=silhouette,
         bboxes=bboxes,
         orig_width=orig_width,
         orig_height=orig_height,

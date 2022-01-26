@@ -62,6 +62,7 @@ img = cv2.cvtColor(cv2.imread(IMG_FILE), cv2.COLOR_BGR2RGB)
 orig_height, orig_width, orig_channels = img.shape
 silhouette_img = cv2.cvtColor(cv2.imread(SILHOUETTE_FILE), cv2.COLOR_BGR2GRAY)
 silhouette_mask = silhouette_img != 0
+# silhouette_mask = None
 # set silhouette_mask to None to not use sihouette loss
 
 joints2d = posetrack_dict[0]['joints2d']
@@ -73,14 +74,26 @@ bboxes = np.stack([bboxes[:, 0], bboxes[:, 1], bboxes[:, 2], bboxes[:, 2]]).T
 joints2d = joints2d[time_pt1:time_pt2]
 frames = frames[time_pt1:time_pt2]
 
+# test
+bboxes[0,2] += 600
+bboxes[0,3] += 600
+
 j2d = joints2d[0]
 bbox = bboxes[0]
-norm_img, raw_img, kp_2d = get_single_image_crop_demo(
+
+silhouette_mask = np.expand_dims(silhouette_mask, -1)
+silhouette_mask = np.tile(silhouette_mask, (1, 1, 3))
+silhouette_mask = silhouette_mask.astype(np.uint8)
+
+norm_img, raw_img, kp_2d, crop_mask = get_single_image_crop_demo(
     img,
     bbox,
     kp_2d=j2d,
     scale=1.0,
-    crop_size=224)
+    crop_size=224,
+    mesh_mask=silhouette_mask)
+
+crop_mask = torch.mean(crop_mask.float(), 2) # 224x224 torch
 
 nj2d = torch.from_numpy(kp_2d)
 norm_joints2d = []
@@ -128,7 +141,7 @@ new_opt_joints3d, new_opt_joint_loss, opt_joint_loss = smplify_runner(
     device=device,
     batch_size=norm_joints2d.shape[0],
     pose2aa=False,
-    silhouette=silhouette_mask,
+    silhouette=crop_mask,
     bboxes=bboxes,
     orig_width=orig_width,
     orig_height=orig_height,
@@ -149,7 +162,7 @@ print("Saved results pickle file")
 # Render image
 renderer = Renderer(resolution=(orig_width, orig_height), orig_img=True, wireframe=False)
 
-pred_cam = new_opt_cam.numpy()
+pred_cam = new_opt_cam.detach().cpu().numpy()
 bboxes = bboxes
 
 orig_cam = convert_crop_cam_to_orig_img(
@@ -164,9 +177,12 @@ frame_verts = new_opt_vertices[0].numpy()
 frame_cam = orig_cam[0]
 mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
 
+""" cam_dict = {'cam': frame_cam}
+joblib.dump(cam_dict, 'frame_cam.pkl') """
+
 img = renderer.render(
                     img,
-                    frame_verts,
+                    frame_verts, # (6890, 3) numpy float32
                     cam=frame_cam,
                     color=mesh_color,
                     mesh_filename=MESH_OUTPUT_FILE,

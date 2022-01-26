@@ -85,7 +85,7 @@ def gen_trans_from_patch_cv(c_x, c_y, src_width, src_height, dst_width, dst_heig
 
     return trans
 
-def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, patch_height, do_flip, scale, rot):
+def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, patch_height, do_flip, scale, rot, binary=False):
     img = cvimg.copy()
     img_height, img_width, img_channels = img.shape
 
@@ -93,9 +93,14 @@ def generate_patch_image_cv(cvimg, c_x, c_y, bb_width, bb_height, patch_width, p
         img = img[:, ::-1, :]
         c_x = img_width - c_x - 1
 
+    # Constant of 600 is added to account for the full body
     trans = gen_trans_from_patch_cv(c_x, c_y, bb_width, bb_height, patch_width, patch_height, scale, rot, inv=False)
 
-    img_patch = cv2.warpAffine(img, trans, (int(patch_width), int(patch_height)),
+    if binary:
+        img_patch = cv2.warpAffine(img, trans, (int(patch_width), int(patch_height)),
+                               flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT)    
+    else:
+        img_patch = cv2.warpAffine(img, trans, (int(patch_width), int(patch_height)),
                                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
 
     return img_patch, trans
@@ -206,7 +211,7 @@ def get_single_image_crop(image, bbox, scale=1.3):
 
     return crop_image
 
-def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224):
+def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224, mesh_mask=None):
     if isinstance(image, str):
         if os.path.isfile(image):
             image = cv2.cvtColor(cv2.imread(image), cv2.COLOR_BGR2RGB)
@@ -231,6 +236,22 @@ def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224):
         rot=0,
     )
 
+    crop_mask = None
+    if mesh_mask is not None:
+        crop_mask, _ = generate_patch_image_cv(
+            cvimg=mesh_mask.copy(),
+            c_x=bbox[0],
+            c_y=bbox[1],
+            bb_width=bbox[2],
+            bb_height=bbox[3],
+            patch_width=crop_size,
+            patch_height=crop_size,
+            do_flip=False,
+            scale=scale,
+            rot=0,
+            binary=True
+        )
+
     if kp_2d is not None:
         for n_jt in range(kp_2d.shape[0]):
             kp_2d[n_jt, :2] = trans_point2d(kp_2d[n_jt], trans)
@@ -239,7 +260,11 @@ def get_single_image_crop_demo(image, bbox, kp_2d, scale=1.2, crop_size=224):
 
     crop_image = convert_cvimg_to_tensor(crop_image)
 
-    return crop_image, raw_image, kp_2d
+    if crop_mask is not None:
+        #crop_mask = convert_cvimg_to_tensor(crop_mask)
+        crop_mask = torch.from_numpy(crop_mask)
+
+    return crop_image, raw_image, kp_2d, crop_mask
 
 def read_image(filename):
     image = cv2.cvtColor(cv2.imread(filename), cv2.COLOR_BGR2RGB)
