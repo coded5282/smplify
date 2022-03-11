@@ -69,7 +69,7 @@ class TemporalSMPLify():
         ign_joints = ['OP Neck', 'OP RHip', 'OP LHip', 'Right Hip', 'Left Hip']
         self.ign_joints = [JOINT_IDS[i] for i in ign_joints]
         #self.num_iters = num_iters
-        self.num_iters = 10
+        self.num_iters = 50
 
         # GMM pose prior
         self.pose_prior = MaxMixturePrior(prior_folder='data/vibe_data',
@@ -129,56 +129,13 @@ class TemporalSMPLify():
         global_orient.requires_grad = False
         camera_translation.requires_grad = False
 
-        """ camera_opt_params = [global_orient, camera_translation]
-
-        if self.use_lbfgs:
-            camera_optimizer = torch.optim.LBFGS(camera_opt_params, max_iter=self.max_iter,
-                                                 lr=self.step_size, line_search_fn='strong_wolfe')
-            for i in range(self.num_iters):
-                def closure():
-                    camera_optimizer.zero_grad()
-                    betas_ext = arrange_betas(body_pose, betas)
-                    smpl_output = self.smpl(global_orient=global_orient,
-                                            body_pose=body_pose,
-                                            betas=betas_ext)
-                    model_joints = smpl_output.joints
-
-                    loss = temporal_camera_fitting_loss(model_joints, camera_translation,
-                                               init_cam_t, camera_center,
-                                               joints_2d, joints_conf, focal_length=self.focal_length)
-                    loss.backward()
-                    return loss
-
-                camera_optimizer.step(closure)
-        else:
-            camera_optimizer = torch.optim.Adam(camera_opt_params, lr=self.step_size, betas=(0.9, 0.999))
-
-            for i in range(self.num_iters):
-                betas_ext = arrange_betas(body_pose, betas)
-                smpl_output = self.smpl(global_orient=global_orient,
-                                        body_pose=body_pose,
-                                        betas=betas_ext)
-                model_joints = smpl_output.joints
-                loss = temporal_camera_fitting_loss(model_joints, camera_translation,
-                                           init_cam_t, camera_center,
-                                           joints_2d, joints_conf, focal_length=self.focal_length)
-                camera_optimizer.zero_grad()
-                loss.backward()
-                camera_optimizer.step() """
-
-        # Fix camera translation after optimizing camera
-        camera_translation.requires_grad = False
-
         # Step 2: Optimize body joints
         # Optimize only the body pose and global orientation of the body
         body_pose.requires_grad = True
         betas.requires_grad = True
         global_orient.requires_grad = True
-        # global_orient.requires_grad = False
         camera_translation.requires_grad = True
         body_opt_params = [body_pose, betas, global_orient, camera_translation]
-        #body_opt_params = [body_pose, betas]
-        #body_opt_params = [body_pose]
 
         # For joints ignored during fitting, set the confidence to 0
         joints_conf[:, self.ign_joints] = 0.
@@ -206,46 +163,20 @@ class TemporalSMPLify():
                                                     2 * 5000. / (224 * camera_translation[:,2] + 1e-9),
                                                     camera_translation[:,0], camera_translation[:,1]
                                                 ], dim=-1)
-                        """ orig_cam = convert_crop_cam_to_orig_img(
-                                        cam=camera_translation_weak.cpu().numpy(), # (733x3)
-                                        bbox=bboxes, # (733x4)
-                                        img_width=orig_width,
-                                        img_height=orig_height
-                                    ) """
 
-                        """ orig_cam = convert_crop_cam_to_orig_img(
-                                        cam=camera_translation_weak.cpu().numpy(), # (733x3)
-                                        bbox=bboxes, # (733x4)
-                                        img_width=224,
-                                        img_height=224
-                                    ) """
-
-                        #mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
-                        #mesh_mask = renderer.render_mask(
-                        #                        verts=model_vertices[0].cpu().numpy(),
-                        #                        cam=orig_cam[0],
-                        #                        color=mesh_color,
-                        #                        mesh_filename=None,
-                        #                    )[:,:,0]
                         device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
                         rotation = torch.eye(3, device=device).unsqueeze(0).expand(1, -1, -1)
                         sx = camera_translation_weak[:,0]
                         sy = camera_translation_weak[:,0]
                         tx = camera_translation_weak[:,1]
                         ty = camera_translation_weak[:,2]
-                        #orig_cam = np.stack([sx, sy, tx, ty]).T
-                        orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
+                        orig_cam = torch.cat([sx, sy, tx, ty]).unsqueeze(0)
+                        #orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
                         mesh_mask = rasterize_mesh(orig_cam[0], model_vertices[0], gt_mask=gt_mask, rotation=rotation,
                                                 translation=camera_translation_weak, focal_length=5000, camera_center=camera_center)
                         # mesh_mask (224,224) tensor
                         # gt_mask (224,224) tensor
 
-                    #model_vertices = smpl_output.vertices.detach().clone()
-                    """ faces = get_smpl_faces()
-                    mesh = trimesh.Trimesh(vertices=model_vertices.cpu()[0].numpy(), faces=faces, process=False)
-                    Rx = trimesh.transformations.rotation_matrix(math.radians(180), [1, 0, 0])
-                    mesh.apply_transform(Rx) """
-                    
                     model_vertices = smpl_output.vertices
 
                     """ left_forearm_top_vertex = model_vertices[0,1617,:] # left forearm top
@@ -281,10 +212,6 @@ class TemporalSMPLify():
                     loss_b = geometric_loss(bot_vertex_b, top_vertex_b, 0.975)
                     geometric_loss_sum = (80.0 ** 2) * (loss_a + loss_b)
 
-                    """ loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
-                                             joints_2d, joints_conf, self.pose_prior,
-                                             focal_length=self.focal_length, gt_mask=mask, mesh_mask=mesh_mask) """
-
                     loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
                                              joints_2d, joints_conf, self.pose_prior,
                                              focal_length=self.focal_length, gt_mask=gt_mask, mesh_mask=mesh_mask,
@@ -315,26 +242,21 @@ class TemporalSMPLify():
                 body_optimizer.step()
                 # scheduler.step(epoch=i)
 
-        # Step 3: Optimize beta only
-        # Optimize only the body pose and global orientation of the body
-        """ body_pose.requires_grad = False
-        betas.requires_grad = True
-        global_orient.requires_grad = True
-        global_orient.requires_grad = False
+        # Step 3: Optimize pose only
+        # Optimize only the body pose of the body
         camera_translation.requires_grad = False
-        body_opt_params = [body_pose, betas, global_orient]
-        #body_opt_params = [body_pose, betas]
-        beta_opt_params = [betas]
-
-        # For joints ignored during fitting, set the confidence to 0
-        joints_conf[:, self.ign_joints] = 0.
+        body_pose.requires_grad = True
+        betas.requires_grad = False
+        global_orient.requires_grad = True
+        camera_translation.requires_grad = False
+        body_opt_params = [body_pose, global_orient]
 
         if self.use_lbfgs:
-            beta_optimizer = torch.optim.LBFGS(beta_opt_params, max_iter=self.max_iter,
+            body_optimizer = torch.optim.LBFGS(body_opt_params, max_iter=self.max_iter,
                                                lr=self.step_size, line_search_fn='strong_wolfe')
             for i in range(self.num_iters):
                 def closure():
-                    beta_optimizer.zero_grad()
+                    body_optimizer.zero_grad()
                     betas_ext = arrange_betas(body_pose, betas)
                     smpl_output = self.smpl(global_orient=global_orient,
                                             body_pose=body_pose,
@@ -343,36 +265,74 @@ class TemporalSMPLify():
 
                     # transforming camera matrices and rendering to prepare for silhouette loss
                     mesh_mask = None
-                    if mask is not None:
-                        model_vertices = smpl_output.vertices.detach().clone()
-                        camera_translation_clone = camera_translation.detach().clone()
+                    if gt_mask is not None:
+                        model_vertices = smpl_output.vertices
                         camera_translation_weak = torch.stack([
-                                                    2 * 5000. / (224 * camera_translation_clone[:,2] + 1e-9),
-                                                    camera_translation_clone[:,0], camera_translation_clone[:,1]
+                                                    2 * 5000. / (224 * camera_translation[:,2] + 1e-9),
+                                                    camera_translation[:,0], camera_translation[:,1]
                                                 ], dim=-1)
-                        orig_cam = convert_crop_cam_to_orig_img(
-                                        cam=camera_translation_weak.cpu().numpy(), # (733x3)
-                                        bbox=bboxes, # (733x4)
-                                        img_width=orig_width,
-                                        img_height=orig_height
-                                    )
-                        mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
-                        mesh_mask = renderer.render_mask(
-                                                verts=model_vertices[0].cpu().numpy(),
-                                                cam=orig_cam[0],
-                                                color=mesh_color,
-                                                mesh_filename=None,
-                                            )
+
+                        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+                        rotation = torch.eye(3, device=device).unsqueeze(0).expand(1, -1, -1)
+                        sx = camera_translation_weak[:,0]
+                        sy = camera_translation_weak[:,0]
+                        tx = camera_translation_weak[:,1]
+                        ty = camera_translation_weak[:,2]
+                        orig_cam = torch.cat([sx, sy, tx, ty]).unsqueeze(0)
+                        #orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
+                        mesh_mask = rasterize_mesh(orig_cam[0], model_vertices[0], gt_mask=gt_mask, rotation=rotation,
+                                                translation=camera_translation_weak, focal_length=5000, camera_center=camera_center)
+                        # mesh_mask (224,224) tensor
+                        # gt_mask (224,224) tensor
+
+                    model_vertices = smpl_output.vertices
+                    """ left_forearm_top_vertex = model_vertices[0,1617,:] # left forearm top
+                    left_pinky_vertex = model_vertices[0,2425,:] # left pinky
+                    loss_left_arm = geometric_loss(left_forearm_top_vertex, left_pinky_vertex, 0.35)
+
+                    right_forearm_top_vertex = model_vertices[0,5885,:] # right forearm top
+                    right_pinky_vertex = model_vertices[0,5086,:] # right pinky
+                    loss_right_arm = geometric_loss(right_forearm_top_vertex, right_pinky_vertex, 0.35)
+
+                    arm_loss_sum = (0.01 ** 2) * (loss_left_arm + loss_right_arm) """
+                    # model_vertices[0,4721,:] left shoulder (currently .3597)
+                    # model_vertices[0,1239,:] right shoulder
+                    left_shoulder_vertex = model_vertices[0,4721,:]
+                    right_shoulder_vertex = model_vertices[0,1239,:]
+                    loss_shoulder = geometric_loss(left_shoulder_vertex, right_shoulder_vertex, 0.20)
+
+                    left_above_hip_vertex = model_vertices[0,4145,:]
+                    right_above_hip_vertex = model_vertices[0,655,:]
+                    loss_above_hip = geometric_loss(left_above_hip_vertex, right_above_hip_vertex, 0.10)
+
+                    hip_shoulder_loss_sum = (80.0 ** 2) * (loss_shoulder + loss_above_hip)
+
+                    # model_vertices[0,4145,:] left above hip (currently .302m)
+                    # model_vertices[0,655,:] right above hip
+                    # legs
+                    bot_vertex_a = model_vertices[0,3421,:]
+                    top_vertex_a = model_vertices[0,809,:]
+                    loss_a = geometric_loss(bot_vertex_a, top_vertex_a, 0.975)
+                    bot_vertex_b = model_vertices[0,6822,:]
+                    top_vertex_b = model_vertices[0,4295,:]
+                    loss_b = geometric_loss(bot_vertex_b, top_vertex_b, 0.975)
+                    geometric_loss_sum = (80.0 ** 2) * (loss_a + loss_b)
 
                     loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
-                                            joints_2d, joints_conf, self.pose_prior,
-                                            focal_length=self.focal_length, gt_mask=mask, mesh_mask=mesh_mask)
+                                             joints_2d, joints_conf, self.pose_prior,
+                                             focal_length=self.focal_length, gt_mask=gt_mask, mesh_mask=mesh_mask,
+                                             mesh_vertices=model_vertices)
+
+                    #loss += geometric_loss_sum
+                    #loss += hip_shoulder_loss_sum
+                    #loss += arm_loss_sum
+
                     loss.backward()
                     return loss
 
-                beta_optimizer.step(closure)
+                body_optimizer.step(closure)
         else:
-            beta_optimizer = torch.optim.Adam(beta_opt_params, lr=self.step_size, betas=(0.9, 0.999))
+            body_optimizer = torch.optim.Adam(body_opt_params, lr=self.step_size, betas=(0.9, 0.999))
 
             for i in range(self.num_iters):
                 betas_ext = arrange_betas(body_pose, betas)
@@ -383,14 +343,120 @@ class TemporalSMPLify():
                 loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
                                          joints_2d, joints_conf, self.pose_prior,
                                          focal_length=self.focal_length)
-                beta_optimizer.zero_grad()
+                body_optimizer.zero_grad()
                 loss.backward()
-                beta_optimizer.step() """
+                body_optimizer.step()
 
+        # Step 4: Optimize arms only
+        # Optimize only the body arms of the body
+        breakpoint()
+        camera_translation.requires_grad = False
+        body_pose.requires_grad = False
+        betas.requires_grad = True
+        global_orient.requires_grad = False
+        camera_translation.requires_grad = False
+        body_opt_params = [betas]
 
+        if self.use_lbfgs:
+            body_optimizer = torch.optim.LBFGS(body_opt_params, max_iter=self.max_iter,
+                                               lr=self.step_size, line_search_fn='strong_wolfe')
+            for i in range(self.num_iters):
+                def closure():
+                    body_optimizer.zero_grad()
+                    betas_ext = arrange_betas(body_pose, betas)
+                    smpl_output = self.smpl(global_orient=global_orient,
+                                            body_pose=body_pose,
+                                            betas=betas_ext)
+                    model_joints = smpl_output.joints
+
+                    # transforming camera matrices and rendering to prepare for silhouette loss
+                    mesh_mask = None
+                    if gt_mask is not None:
+                        model_vertices = smpl_output.vertices
+                        camera_translation_weak = torch.stack([
+                                                    2 * 5000. / (224 * camera_translation[:,2] + 1e-9),
+                                                    camera_translation[:,0], camera_translation[:,1]
+                                                ], dim=-1)
+
+                        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+                        rotation = torch.eye(3, device=device).unsqueeze(0).expand(1, -1, -1)
+                        sx = camera_translation_weak[:,0]
+                        sy = camera_translation_weak[:,0]
+                        tx = camera_translation_weak[:,1]
+                        ty = camera_translation_weak[:,2]
+                        orig_cam = torch.cat([sx, sy, tx, ty]).unsqueeze(0)
+                        #orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
+                        mesh_mask = rasterize_mesh(orig_cam[0], model_vertices[0], gt_mask=gt_mask, rotation=rotation,
+                                                translation=camera_translation_weak, focal_length=5000, camera_center=camera_center)
+                        # mesh_mask (224,224) tensor
+                        # gt_mask (224,224) tensor
+
+                    model_vertices = smpl_output.vertices
+
+                    left_forearm_top_vertex = model_vertices[0,1617,:] # left forearm top
+                    left_pinky_vertex = model_vertices[0,2425,:] # left pinky
+                    loss_left_arm = geometric_loss(left_forearm_top_vertex, left_pinky_vertex, 0.40)
+
+                    right_forearm_top_vertex = model_vertices[0,5885,:] # right forearm top
+                    right_pinky_vertex = model_vertices[0,5086,:] # right pinky
+                    loss_right_arm = geometric_loss(right_forearm_top_vertex, right_pinky_vertex, 0.40)
+
+                    arm_loss_sum = (10 ** 2) * (loss_left_arm + loss_right_arm)
+
+                    # model_vertices[0,4721,:] left shoulder (currently .3597)
+                    # model_vertices[0,1239,:] right shoulder
+                    """ left_shoulder_vertex = model_vertices[0,4721,:]
+                    right_shoulder_vertex = model_vertices[0,1239,:]
+                    loss_shoulder = geometric_loss(left_shoulder_vertex, right_shoulder_vertex, 0.20)
+
+                    left_above_hip_vertex = model_vertices[0,4145,:]
+                    right_above_hip_vertex = model_vertices[0,655,:]
+                    loss_above_hip = geometric_loss(left_above_hip_vertex, right_above_hip_vertex, 0.10)
+
+                    hip_shoulder_loss_sum = (80.0 ** 2) * (loss_shoulder + loss_above_hip) """
+
+                    # model_vertices[0,4145,:] left above hip (currently .302m)
+                    # model_vertices[0,655,:] right above hip
+                    # legs
+                    """ bot_vertex_a = model_vertices[0,3421,:]
+                    top_vertex_a = model_vertices[0,809,:]
+                    loss_a = geometric_loss(bot_vertex_a, top_vertex_a, 0.975)
+                    bot_vertex_b = model_vertices[0,6822,:]
+                    top_vertex_b = model_vertices[0,4295,:]
+                    loss_b = geometric_loss(bot_vertex_b, top_vertex_b, 0.975)
+                    geometric_loss_sum = (80.0 ** 2) * (loss_a + loss_b)
+
+                    loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
+                                             joints_2d, joints_conf, self.pose_prior,
+                                             focal_length=self.focal_length, gt_mask=gt_mask, mesh_mask=mesh_mask,
+                                             mesh_vertices=model_vertices) """
+
+                    #loss += geometric_loss_sum
+                    #loss += hip_shoulder_loss_sum
+                    #loss += arm_loss_sum
+                    loss = arm_loss_sum
+
+                    loss.backward()
+                    return loss
+
+                body_optimizer.step(closure)
+        else:
+            body_optimizer = torch.optim.Adam(body_opt_params, lr=self.step_size, betas=(0.9, 0.999))
+
+            for i in range(self.num_iters):
+                betas_ext = arrange_betas(body_pose, betas)
+                smpl_output = self.smpl(global_orient=global_orient,
+                                        body_pose=body_pose,
+                                        betas=betas_ext)
+                model_joints = smpl_output.joints
+                loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
+                                         joints_2d, joints_conf, self.pose_prior,
+                                         focal_length=self.focal_length)
+                body_optimizer.zero_grad()
+                loss.backward()
+                body_optimizer.step()
 
         # Get final loss value
-
         with torch.no_grad():
             betas_ext = arrange_betas(body_pose, betas)
             smpl_output = self.smpl(global_orient=global_orient,
@@ -414,33 +480,15 @@ class TemporalSMPLify():
                 sy = camera_translation_weak[:,0]
                 tx = camera_translation_weak[:,1]
                 ty = camera_translation_weak[:,2]
-                #orig_cam = np.stack([sx, sy, tx, ty]).T
-                orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
+                orig_cam = torch.cat([sx, sy, tx, ty]).unsqueeze(0)
+                #orig_cam = torch.hstack((sx, sy, tx, ty)).unsqueeze(0)
                 mesh_mask = rasterize_mesh(orig_cam[0], model_vertices[0], gt_mask=gt_mask, rotation=rotation,
                                         translation=camera_translation_weak, focal_length=5000, camera_center=camera_center)
                                         
-                """ orig_cam = convert_crop_cam_to_orig_img(
-                                cam=camera_translation_weak.cpu().numpy(), # (733x3)
-                                bbox=bboxes, # (733x4)
-                                img_width=orig_width,
-                                img_height=orig_height
-                            )
-                mesh_color = colorsys.hsv_to_rgb(np.random.rand(), 0.5, 1.0)
-                mesh_mask = renderer.render_mask(
-                                        verts=model_vertices[0].cpu().numpy(),
-                                        cam=orig_cam[0],
-                                        color=mesh_color,
-                                        mesh_filename=None,
-                                    ) """
             reprojection_loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation, camera_center,
                                              joints_2d, joints_conf, self.pose_prior,
                                              focal_length=self.focal_length, gt_mask=gt_mask, mesh_mask=mesh_mask,
                                              mesh_vertices=model_vertices)
-            """ reprojection_loss = temporal_body_fitting_loss(body_pose, betas, model_joints, camera_translation,
-                                                           camera_center,
-                                                           joints_2d, joints_conf, self.pose_prior,
-                                                           focal_length=self.focal_length,
-                                                           output='reprojection', gt_mask=mask, mesh_mask=mesh_mask) """
 
         vertices = smpl_output.vertices.detach()
         joints = smpl_output.joints.detach()

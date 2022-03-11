@@ -106,8 +106,6 @@ def rasterize_mesh(camera, verts, azimuth=0., elev=0., img_dim=224, gt_mask=None
         #return pix_to_face[0, ..., 0], bary_coords[0, ..., 0, :]
 
 
-
-
         # Place a point light in front of the object. As mentioned above, the front of the cow is facing the 
         # -z direction. 
         lights = PointLights(device=device, location=[[0.0, 0.0, -3.0]]) # -3.0 to put in front of mannequin
@@ -142,6 +140,7 @@ def rasterize_mesh(camera, verts, azimuth=0., elev=0., img_dim=224, gt_mask=None
         #gt_mask = torch.mean(gt_mask, 2, True) # flatten to 224x224x1
         g = torch.unsqueeze(g, 2) # add dummy 3rd dimension
         valid_mask = (g != 255)
+        gt_mask = gt_mask.to(device)
         output_img = g * valid_mask + (~valid_mask) * gt_mask # 224x224x1 tensor
         
         if save_name is not None:

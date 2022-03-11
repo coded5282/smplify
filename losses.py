@@ -139,12 +139,13 @@ def draw_on_image(img, points, color, radius=1):
 def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_center,
                                joints_2d, joints_conf, pose_prior,
                                focal_length=5000, sigma=100, pose_prior_weight=6.78, # 6.78 sigma: 100
-                               shape_prior_weight=7.0, angle_prior_weight=4.5, # 4.5
-                               smooth_2d_weight=1000, smooth_3d_weight=1.0, silhouette_weight=80.0,
+                               shape_prior_weight=9.0, angle_prior_weight=4.8, # 4.5
+                               smooth_2d_weight=1000, smooth_3d_weight=1.0, silhouette_weight=150,
                                output='sum', gt_mask=None, mesh_mask=None, mesh_vertices=None):
     """
     Loss function for body fitting
     """
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
     # pose_prior_weight = 1.
     # shape_prior_weight = 1.
     # angle_prior_weight = 1.
@@ -208,6 +209,7 @@ def temporal_body_fitting_loss(body_pose, betas, model_joints, camera_t, camera_
     # Silhouette loss
     dice_loss_val = 0
     if (gt_mask is not None) and (mesh_mask is not None):
+        gt_mask = gt_mask.to(device)
         dice_loss_val = dice_loss(inputs=mesh_mask, targets=gt_mask)
         dice_loss_val = (silhouette_weight ** 2) * dice_loss_val
 
